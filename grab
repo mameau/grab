@@ -1,0 +1,72 @@
+#!/bin/bash
+
+IFS=$'\n'
+
+LISTSDIR=_lists
+
+INPUT=${1}
+OUTDIR=${2}
+EXCLUDE=${3}
+
+REQFAIL=0
+[ -z $INPUT ] && echo "Need an archive.org dl url to process (e.g.https://archive.org/download/tosec-iso-sega)" && REQFAIL=1
+[ -z $OUTDIR ] && echo "Need output dir" && REQFAIL=1
+[[ ! -z $EXCLUDE && ! -f $EXCLUDE ]] && echo "Exclude file does not exist" && REQFAIL=1
+[ $REQFAIL -gt 0 ] && exit 1
+
+BASENAME=$(echo $INPUT | cut -d'/' -f5)
+FILESNAME=${BASENAME}_files.xml
+WGETLST=${LISTSDIR}/${FILESNAME}.wget
+WGETOPT="-c -x -nH --no-glob --cut-dirs=2 -P"
+
+if [ ! -f ${LISTSDIR} ]
+then
+  cd $LISTSDIR
+  echo "${INPUT}/${FILESNAME}"
+  curl -skLO "${INPUT}/${FILESNAME}"
+  cd ../
+fi
+
+[ ! -f "${LISTSDIR}/${FILESNAME}" ] && echo "Failed to download xml, ${INPUT}/${FILESNAME} exiting" && exit 1
+
+FILES=$(cat "${LISTSDIR}/${FILESNAME}" | \
+    xmllint --xpath '//file[contains(@name,".zip")]/@name' - 2>&1 | \
+    sed 's/ name=\"//g' | \
+    sed 's/zip\"/zip\n/g')
+
+if echo ${FILES[0]} | grep "Usage : xmllint" &>/dev/null
+then
+  echo "xmlint operation failed, this version of xmlint may not support xpath"
+  exit 1
+fi
+
+[ -f ${WGETLST} ] && rm ${WGETLST}
+for FILE in ${FILES[@]}
+do
+  echo "${FILE}"
+  #FOLDERS=$(echo $FILE | sed -r 's#^(.*)/.*$#\1#g')
+  #[ ! -d ${OUTDIR}/${FOLDERS} ] && mkdir -p ${OUTDIR}/${FOLDERS}
+  #URLFILE="$(echo ${FILE} | sed -r 's#\[#%5B#g' | sed -r 's#\!#%21#g' | sed -r 's#\]#%5D#g')"
+  URLFILE="$(echo ${FILE} | sed -r 's#amp;##g')"
+  #URLFILE="${FILE}"
+
+  if [ ! -z $EXCLUDE ]
+  then
+    if ! grep -F "${FILE}" ${EXCLUDE}
+    then
+      echo "wget ${WGETOPT} \"${OUTDIR}\" \"${INPUT}/${URLFILE}\"" >> ${WGETLST} 
+    else
+      echo "EXCLUDED: ${FILE}"
+    fi
+  else
+    echo "wget ${WGETOPT} \"${OUTDIR}\" \"${INPUT}/${URLFILE}\"" >> ${WGETLST} 
+  fi
+done
+
+#if [ $OUTDIR != "NONE" ]
+#then
+#  wget -c -B "${INPUT}/" -P "${OUTDIR}" -i ${WGETLST}
+#else
+  echo "Generating a queue"
+  echo "-: bash ${WGETLST}"
+#fi
